@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 
+from app.admin import router as admin_router
 from app.config import settings
 from app.db import connect
 from app.export import build_workbook
@@ -17,6 +18,7 @@ from app.scraper import UpstreamError, sync
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("api")
+ROOT = Path(__file__).resolve().parent.parent / "frontend"
 
 
 def ensure_cache() -> None:
@@ -46,31 +48,25 @@ async def lifespan(_: FastAPI):
         pass
     if settings.sync_on_startup:
         try:
-            result = sync(full=False)
-            log.info("startup sync %s", result)
+            sync(full=False)
         except Exception:
-            log.exception("startup sync failed; API will serve the last cache")
+            log.exception("startup sync failed")
     yield
 
 
-app = FastAPI(
-    title="Student Offers cache",
-    description="Local cache of the public StudentOffers.co directory.",
-    version="1.0.0",
-    lifespan=lifespan,
-)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["GET", "POST"],
-    allow_headers=["*"],
-)
+app = FastAPI(title="Student Offers", version="1.0.0", lifespan=lifespan)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET", "POST"], allow_headers=["*"])
+app.include_router(admin_router)
 
 
 @app.get("/")
 def home() -> FileResponse:
-    page = Path(__file__).resolve().parent.parent / "frontend" / "index.html"
-    return FileResponse(page)
+    return FileResponse(ROOT / "index.html")
+
+
+@app.get("/admin")
+def admin_page() -> FileResponse:
+    return FileResponse(ROOT / "admin.html")
 
 
 @app.get("/health")
@@ -79,14 +75,6 @@ def health() -> dict[str, Any]:
         count = conn.execute("SELECT COUNT(*) FROM offers").fetchone()[0]
         last = conn.execute("SELECT synced_at, offer_count, status FROM sync_runs ORDER BY id DESC LIMIT 1").fetchone()
     return {"ok": True, "cached_offers": count, "last_sync": dict(last) if last else None, "source": settings.source_base}
-
-
-@app.post("/sync")
-def run_sync(full: bool = Query(False)) -> dict[str, Any]:
-    try:
-        return sync(full=full)
-    except UpstreamError as exc:
-        raise HTTPException(status_code=exc.status or 502, detail=str(exc)) from exc
 
 
 @app.get("/categories")
@@ -98,7 +86,7 @@ def categories() -> dict[str, Any]:
 
 
 @app.get("/offers")
-def list_offers(q: str | None = None, category: str | None = None, location: str | None = None, limit: int = Query(24, ge=1, le=200), offset: int = Query(0, ge=0)) -> dict[str, Any]:
+def list_offers(q: str | None = None, category: str | None = None, limit: int = Query(24, ge=1, le=200), offset: int = Query(0, ge=0)) -> dict[str, Any]:
     ensure_cache()
     clauses = ["1=1"]
     params: list[Any] = []
@@ -109,9 +97,6 @@ def list_offers(q: str | None = None, category: str | None = None, location: str
     if category:
         clauses.append("category_main = ?")
         params.append(category)
-    if location:
-        clauses.append("location = ?")
-        params.append(location)
     where = " AND ".join(clauses)
     with connect() as conn:
         total = conn.execute(f"SELECT COUNT(*) FROM offers WHERE {where}", params).fetchone()[0]
@@ -120,7 +105,7 @@ def list_offers(q: str | None = None, category: str | None = None, location: str
 
 
 @app.get("/offers.xlsx")
-def export_offers(q: str | None = None, category: str | None = None, location: str | None = None):
+def export_offers(q: str | None = None, category: str | None = None):
     ensure_cache()
     clauses = ["1=1"]
     params: list[Any] = []
@@ -131,14 +116,11 @@ def export_offers(q: str | None = None, category: str | None = None, location: s
     if category:
         clauses.append("category_main = ?")
         params.append(category)
-    if location:
-        clauses.append("location = ?")
-        params.append(location)
     where = " AND ".join(clauses)
     with connect() as conn:
         rows = conn.execute(f"SELECT source_id, slug, name, offer, description, claim_url, logo, location, github_offer, is_underrated, featured_order, hidden_gem_order, urgency_badge, category_main, category_sub, verification_status, tags_json, extra_json, has_discount_codes, has_alt_links, canonical_url, synced_at FROM offers WHERE {where} ORDER BY category_main, name", params).fetchall()
     if not rows:
-        raise HTTPException(status_code=404, detail="No offers in cache. POST /sync first.")
+        raise HTTPException(status_code=404, detail="No offers in cache.")
     return StreamingResponse(build_workbook(rows), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": "attachment; filename=student-offers.xlsx"})
 
 
