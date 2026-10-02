@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Admin · Student Offers</title>
+  <style>
+    :root { color-scheme: dark; --bg:#0b0d10; --card:#161a20; --line:#2a313b; --text:#f4f6f8; --muted:#9aa3af; --accent:#7cffb2; --ink:#062214; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: ui-sans-serif, system-ui, sans-serif; background:var(--bg); color:var(--text); }
+    main { width:min(1100px, calc(100% - 24px)); margin:0 auto; padding:24px 0 40px; }
+    h1 { margin:0 0 6px; font-size:28px; }
+    p { color:var(--muted); }
+    .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; margin:16px 0; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; }
+    .card b { display:block; font-size:24px; }
+    .card span, td, th { color:var(--muted); font-size:13px; }
+    .bar { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0; }
+    input, button, a { border:1px solid var(--line); background:#10141a; color:var(--text); border-radius:12px; padding:11px 12px; font:inherit; text-decoration:none; }
+    button.primary { background:var(--accent); color:var(--ink); border-color:transparent; font-weight:700; }
+    table { width:100%; border-collapse:collapse; }
+    th, td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--line); vertical-align:top; }
+    .wrap { overflow-x:auto; }
+    .hidden { display:none; }
+    form { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Admin</h1>
+    <p>Directory cache, sync, and export.</p>
+    <form id="login">
+      <div class="bar">
+        <input id="password" type="password" placeholder="Admin password" />
+        <button class="primary" type="submit">Sign in</button>
+      </div>
+      <p id="login-error"></p>
+    </form>
+    <section id="dash" class="hidden">
+      <div class="cards" id="cards"></div>
+      <div class="bar">
+        <input id="q" placeholder="Search offers" />
+        <button id="search">Search</button>
+        <button id="sync" class="primary">Sync now</button>
+        <a href="/offers.xlsx">Excel</a>
+        <a href="/">Public site</a>
+      </div>
+      <p id="status"></p>
+      <div class="wrap"><table><thead><tr><th>Name</th><th>Offer</th><th>Category</th><th>Location</th><th>Links</th></tr></thead><tbody id="rows"></tbody></table></div>
+    </section>
+  </main>
+  <script>
+    const login = document.querySelector('#login');
+    const dash = document.querySelector('#dash');
+    const rows = document.querySelector('#rows');
+    const status = document.querySelector('#status');
+    async function loadStats() {
+      const res = await fetch('/admin/stats');
+      if (res.status === 401) return false;
+      const data = await res.json();
+      document.querySelector('#cards').innerHTML = [['Offers', data.offers], ['Categories', data.categories], ['GitHub pack', data.github_pack], ['Last sync', data.last_sync ? data.last_sync.offer_count : 'Never']].map(([label, value]) => '<article class="card"><b>' + value + '</b><span>' + label + '</span></article>').join('');
+      return true;
+    }
+    async function loadOffers() {
+      status.textContent = 'Loading…';
+      const q = document.querySelector('#q').value.trim();
+      const res = await fetch('/offers?limit=50' + (q ? '&q=' + encodeURIComponent(q) : ''));
+      const data = await res.json();
+      rows.innerHTML = '';
+      data.offers.forEach((offer) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = '<td></td><td></td><td></td><td></td><td></td>';
+        tr.children[0].textContent = offer.name;
+        tr.children[1].textContent = offer.offer;
+        tr.children[2].textContent = offer.category_main || '';
+        tr.children[3].textContent = offer.location || '';
+        tr.children[4].innerHTML = '<a href="' + offer.original_link + '" target="_blank">Original</a> <a href="' + (offer.claim_url || offer.original_link) + '" target="_blank">Claim</a>';
+        rows.append(tr);
+      });
+      status.textContent = data.total + ' offers in cache';
+    }
+    login.onsubmit = async (event) => {
+      event.preventDefault();
+      const res = await fetch('/admin/login', { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ password: document.querySelector('#password').value }) });
+      if (!res.ok) { document.querySelector('#login-error').textContent = 'Wrong password'; return; }
+      login.classList.add('hidden');
+      dash.classList.remove('hidden');
+      await loadStats();
+      await loadOffers();
+    };
+    document.querySelector('#search').onclick = loadOffers;
+    document.querySelector('#sync').onclick = async () => {
+      status.textContent = 'Syncing…';
+      const res = await fetch('/admin/sync', { method:'POST' });
+      const data = await res.json();
+      status.textContent = res.ok ? 'Synced ' + data.offer_count + ' offers' : (data.detail || 'Sync failed');
+      if (res.ok) { await loadStats(); await loadOffers(); }
+    };
+    loadStats().then((ok) => { if (ok) { login.classList.add('hidden'); dash.classList.remove('hidden'); loadOffers(); } });
+  </script>
+</body>
+</html>
