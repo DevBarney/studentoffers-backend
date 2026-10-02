@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Student Offers</title>
+  <style>
+    :root { color-scheme: dark; --bg: #0b0d10; --card: #161a20; --line: #2a313b; --text: #f4f6f8; --muted: #9aa3af; --accent: #7cffb2; --accent-ink: #062214; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif; background: var(--bg); color: var(--text); }
+    header, main { width: min(880px, calc(100% - 28px)); margin: 0 auto; }
+    header { padding: 28px 0 8px; }
+    h1 { margin: 0 0 6px; font-size: 28px; letter-spacing: -0.04em; }
+    p.lead { margin: 0; color: var(--muted); line-height: 1.45; }
+    .bar { display: flex; gap: 8px; margin: 18px 0 12px; }
+    input, button, a.btn { border: 1px solid var(--line); background: #10141a; color: var(--text); border-radius: 12px; padding: 12px 14px; font: inherit; }
+    input { flex: 1; min-width: 0; }
+    button, a.btn { cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
+    button.primary, a.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; font-weight: 700; }
+    .chips { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 8px; }
+    .chip { white-space: nowrap; background: transparent; }
+    .chip.on { background: #243042; border-color: #4d6b92; }
+    .meta { color: var(--muted); font-size: 13px; margin: 8px 0 14px; }
+    .grid { display: grid; gap: 12px; }
+    article { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px; }
+    article h2 { margin: 0 0 6px; font-size: 18px; }
+    article p { margin: 0 0 10px; color: #d7dde5; line-height: 1.4; }
+    .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+    .tag { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 4px 8px; }
+    .actions { display: flex; gap: 8px; }
+    .actions a { flex: 1; }
+    footer { color: var(--muted); font-size: 12px; padding: 22px 0 36px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Student Offers</h1>
+    <p class="lead">Verified student discounts. Original link is the StudentOffers page. Claim link is the brand page.</p>
+    <div class="bar">
+      <input id="q" placeholder="Search Spotify, Adobe, GitHub…" enterkeyhint="search" />
+      <button class="primary" id="go">Search</button>
+    </div>
+    <div class="chips" id="chips"></div>
+    <div class="meta" id="meta">Loading offers… first load syncs the directory and can take a few seconds.</div>
+    <a class="btn" id="excel" href="/offers.xlsx">Download Excel</a>
+  </header>
+  <main>
+    <div class="grid" id="list"></div>
+    <footer>Details change. Open the claim link before you rely on a discount.</footer>
+  </main>
+  <script>
+    const q = document.querySelector('#q');
+    const list = document.querySelector('#list');
+    const meta = document.querySelector('#meta');
+    const chips = document.querySelector('#chips');
+    const excel = document.querySelector('#excel');
+    let category = '';
+    function params() {
+      const search = new URLSearchParams();
+      if (q.value.trim()) search.set('q', q.value.trim());
+      if (category) search.set('category', category);
+      search.set('limit', '24');
+      return search;
+    }
+    function card(offer) {
+      const tags = [offer.category_main, offer.location, ...(offer.tags || [])].filter(Boolean);
+      const el = document.createElement('article');
+      el.innerHTML = '<h2></h2><p></p><div class="tags"></div><div class="actions"><a class="btn" target="_blank" rel="noopener">Original</a><a class="btn primary" target="_blank" rel="noopener">Claim</a></div>';
+      el.querySelector('h2').textContent = offer.name;
+      el.querySelector('p').textContent = offer.offer;
+      const tagBox = el.querySelector('.tags');
+      tags.forEach((tag) => { const span = document.createElement('span'); span.className = 'tag'; span.textContent = tag; tagBox.append(span); });
+      const [original, claim] = el.querySelectorAll('a');
+      original.href = offer.original_link || '#';
+      claim.href = offer.claim_url || offer.original_link || '#';
+      if (!offer.claim_url) claim.textContent = 'No claim link';
+      return el;
+    }
+    async function load() {
+      meta.textContent = 'Loading…';
+      const search = params();
+      excel.href = '/offers.xlsx' + (search.toString() ? '?' + search.toString().replace('limit=24', '').replace(/^&|&$/g, '') : '');
+      const res = await fetch('/offers?' + search.toString());
+      if (!res.ok) { meta.textContent = 'Could not load offers (' + res.status + '). Try again in a moment.'; return; }
+      const data = await res.json();
+      list.innerHTML = '';
+      data.offers.forEach((offer) => list.append(card(offer)));
+      meta.textContent = data.total + ' offers' + (category ? ' in ' + category : '') + (q.value.trim() ? ' matching “' + q.value.trim() + '”' : '');
+    }
+    async function loadCategories() {
+      const res = await fetch('/categories');
+      if (!res.ok) return;
+      const data = await res.json();
+      chips.innerHTML = '';
+      const all = document.createElement('button');
+      all.className = 'chip on';
+      all.textContent = 'All';
+      all.onclick = () => setCategory('', all);
+      chips.append(all);
+      data.categories.forEach((item) => {
+        const button = document.createElement('button');
+        button.className = 'chip';
+        button.textContent = item.name + ' ' + item.count;
+        button.onclick = () => setCategory(item.name, button);
+        chips.append(button);
+      });
+    }
+    function setCategory(name, button) {
+      category = name;
+      chips.querySelectorAll('.chip').forEach((chip) => chip.classList.remove('on'));
+      button.classList.add('on');
+      load();
+    }
+    document.querySelector('#go').onclick = load;
+    q.addEventListener('keydown', (event) => { if (event.key === 'Enter') load(); });
+    load().then(loadCategories);
+  </script>
+</body>
+</html>
